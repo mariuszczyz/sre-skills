@@ -1,3 +1,9 @@
+---
+name: k8s-deep-troubleshoot
+description: Comprehensive diagnostic tool for Kubernetes clusters using read-only kubectl commands. Provides pod diagnostics (CrashLoopBackOff, OOMKilled, ImagePull errors), node health checks (NotReady, pressure conditions), network troubleshooting (CoreDNS, endpoints, NetworkPolicies), and resource constraint analysis (PVCs, quotas, utilization).
+tools: Bash
+---
+
 # Kubernetes Deep Troubleshooting
 
 Comprehensive diagnostic tool for Kubernetes clusters using read-only kubectl commands.
