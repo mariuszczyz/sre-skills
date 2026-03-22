@@ -2,6 +2,7 @@
 name: k8s-troubleshooter
 description: Use when user needs deep-dive Kubernetes troubleshooting, root cause analysis, or investigation of specific failing resources. Provides comprehensive diagnostics for pods, nodes, deployments, services, networking (Ingress/NetworkPolicy), storage (PVC/PV), and security (RBAC). Goes beyond health monitoring to identify why things are broken.
 tools: Bash, Read, Grep
+guardrails: read-only
 ---
 
 # Kubernetes Troubleshooter Skill
@@ -303,15 +304,90 @@ The container is being terminated by the OOM killer because it exceeds its 256Mi
 
 ---
 
-## Read-Only Operations Only
+## READ-ONLY OPERATIONS GUARDRAILS (CRITICAL)
 
-This skill **does not** perform any of the following:
-- Delete, restart, or modify resources
-- Apply configuration changes
-- Scale workloads
-- Roll back deployments
+### This Skill Is Strictly Read-Only
 
-All remediation requires explicit user action. The skill provides diagnostic information and recommendations only.
+**This skill MUST NEVER perform any of the following actions without explicit user confirmation:**
+
+#### Destructive Operations (NEVER execute without explicit confirmation):
+
+| Operation Type | Forbidden Commands |
+|----------------|-------------------|
+| **Deletion** | `kubectl delete`, `rm`, `remove` |
+| **Modification** | `kubectl edit`, `kubectl patch`, `kubectl apply` |
+| **Scaling** | `kubectl scale`, `kubectl autoscale` |
+| **Rollout Operations** | `kubectl rollout undo`, `kubectl rollout restart` |
+| **Pod Destruction** | `kubectl delete pod`, `kubectl drain`, `kubectl cordon/uncordon` |
+| **Configuration Changes** | `kubectl set resources`, `kubectl set image`, `kubectl set env` |
+| **Force Operations** | `--force` flag on any kubectl command |
+| **Secrets Manipulation** | Creating, deleting, or modifying secrets |
+
+### Guardrail Rules
+
+1. **Diagnose Only**: Only run diagnostic/reading commands:
+   - ✅ Allowed without confirmation: `get`, `describe`, `logs`, `top`, `auth can-i`
+   - ❌ Never run: `delete`, `patch`, `edit`, `apply`, `scale`, `set`, `drain`, `cordon`
+
+2. **Confirmation Required**: Before ANY command that could modify cluster state:
+   - Explain what the command does
+   - Explain why it might be needed
+   - Get explicit user approval (e.g., "Would you like me to run this?")
+   - Never assume approval or use casual language like "let me fix this"
+
+3. **Recommendation Format**: When suggesting remediation:
+   ```markdown
+   ### Recommended Fix
+
+   To resolve this issue, you could run:
+   ```bash
+   kubectl patch deployment/api-server -n production -p '{"spec":{"template":{"spec":{"containers":[{"name":"api-server","resources":{"limits":{"memory":"512Mi"}}}]}}}}'
+   ```
+
+   **This will modify the deployment.** Run this command only if you confirm this is the intended fix.
+   ```
+
+4. **No Silent Changes**: Never run commands that silently change state in the background
+
+5. **Preserve User Control**: The user decides:
+   - When to apply fixes
+   - Which remediation approach to use
+   - Whether to proceed at all
+
+### Command Safety Checklist
+
+Before running ANY command, verify:
+
+- [ ] Does this command only READ data? → Safe to run
+- [ ] Does this command MODIFY state? → **STOP - get confirmation**
+- [ ] Does this command DELETE resources? → **STOP - get explicit confirmation**
+- [ ] Am I about to use `patch`, `apply`, `edit`, `delete`, or `scale`? → **STOP - get explicit confirmation**
+
+### Examples of Correct Behavior
+
+**User**: "My pods are crashing"
+
+**DO:**
+```
+I see the issue. The pods are CrashLoopBackOff because...
+
+Here's what I found:
+- Exit code: 137 (OOMKilled)
+- Memory limit: 256Mi (likely too low)
+
+To fix this, you could increase the memory limit:
+```bash
+kubectl set resources deployment/my-app -n production --limits=memory=512Mi
+```
+Would you like me to run this command?
+```
+
+**DON'T:**
+```
+Let me fix that by increasing the memory...
+
+# kubectl set resources deployment/my-app -n production --limits=memory=512Mi
+```
 
 ---
 
