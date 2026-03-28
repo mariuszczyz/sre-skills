@@ -27,6 +27,49 @@ This skill helps you diagnose Kubernetes issues by running targeted `kubectl` co
 
 ---
 
+## GUARDRAILS — MANDATORY RULES
+
+> **These rules apply unconditionally. No exception. No override.**
+
+### Read-Only Enforcement
+
+This skill operates in **strict read-only mode**. The agent MUST NOT execute any command that creates, modifies, deletes, or patches cluster resources. The following kubectl subcommands are **FORBIDDEN**:
+
+| Forbidden subcommand | Reason |
+|---|---|
+| `apply`, `create`, `run` | Creates resources |
+| `delete` | Destroys resources |
+| `patch`, `edit`, `set` | Modifies resources |
+| `scale`, `autoscale` | Alters replica state |
+| `rollout restart`, `rollout undo` | Triggers restarts or rollbacks |
+| `label`, `annotate`, `taint` | Mutates metadata |
+| `drain`, `cordon`, `uncordon` | Alters node schedulability |
+| `exec`, `cp`, `port-forward` | Interacts with running workloads |
+| `replace`, `expose` | Creates or replaces resources |
+
+Only the following read-only subcommands are permitted: `get`, `describe`, `logs`, `top`, `rollout status`, `rollout history`, `auth can-i`, `config view`, `config current-context`, `cluster-info`, and `get --raw`.
+
+### Mandatory User Confirmation
+
+**Every single `kubectl` command MUST be shown to the user and explicitly confirmed before execution.** The agent must:
+
+1. State the purpose of the command in plain English
+2. Display the exact command that will be run
+3. Wait for the user to type "yes", "ok", "proceed", or equivalent explicit approval
+4. **Never batch-execute** multiple commands without individual confirmation for each
+
+If the user has not confirmed a command, **do not run it**.
+
+### Prohibited Patterns
+
+- Do NOT suggest or run `kubectl run` even with `--rm` (it creates a pod)
+- Do NOT SSH into nodes or execute shell commands on cluster nodes
+- Do NOT modify kubeconfig files or switch contexts without explicit user instruction
+- Do NOT install any tools or agents into the cluster
+- Do NOT write output to files unless the user explicitly asks for it
+
+---
+
 ## Usage Patterns
 
 ### Quick Cluster Health Check
@@ -249,9 +292,16 @@ kubectl get endpoints <service-name> -n <namespace>
 kubectl get svc <service-name> -n <namespace> -o yaml | grep -A 3 "selector:"
 kubectl get pods -l app=<label> -n <namespace>
 
-# Step 3: Test connectivity from within cluster
-kubectl run test --rm -it --image=curlimages/curl -- curl <service>:<port> || echo "Connection failed"
+# Step 3: Verify pod readiness (endpoints only appear for Ready pods)
+kubectl get pods -l app=<label> -n <namespace> -o wide
+
+# Step 4: Check for network policies that may block traffic
+kubectl get networkpolicy -n <namespace>
+kubectl describe networkpolicy -n <namespace>
 ```
+
+> **NOTE**: `kubectl run` is FORBIDDEN by this skill's guardrails — it creates a pod (mutative action).
+> In-cluster connectivity testing requires user-initiated action outside this skill.
 
 ### Pattern 3: Deployment Not Updating
 
@@ -275,8 +325,11 @@ This skill **does not** perform any of the following actions:
 - Restart containers or roll back deployments
 - Scale workloads up or down
 - Modify configurations or apply changes
+- Create ephemeral pods for connectivity testing
 
 All remediation requires explicit user action. The skill provides diagnostic information and recommendations only.
+
+See the **GUARDRAILS** section above for the complete mandatory rules, including the requirement for user confirmation before every command.
 
 ---
 

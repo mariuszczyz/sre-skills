@@ -104,13 +104,11 @@ kubectl get pod <pod-name> -n <namespace> -o yaml | grep -A 5 "resources:"
 # Check node conditions
 kubectl describe node <node-name> | grep -A 10 "Conditions:"
 
-# Check kubelet status (requires SSH to node)
-systemctl status kubelet  # on the node itself
-
-# Check system resources on node
-free -h  # memory
-df -h    # disk space
+# Check node events for kubelet issues
+kubectl get events -n kube-system --field-selector=type=Warning --sort-by='.lastTimestamp'
 ```
+
+> **GUARDRAIL**: SSH into nodes (`systemctl status kubelet`, `free -h`, `df -h`) is outside the scope of this read-only skill. Node-level shell access requires explicit user action.
 
 **Common Causes**:
 - Kubelet crashed or not running
@@ -190,9 +188,16 @@ kubectl get endpoints <service-name> -n <namespace>
 kubectl get svc <service-name> -n <namespace> -o yaml | grep -A 5 "selector:"
 kubectl get pods -n <namespace> --show-labels | grep <pod-name>
 
-# Test connectivity from within cluster
-kubectl run test --rm -it --image=curlimages/curl -- curl <service-name>:<port>
+# Check pod readiness (only Ready pods appear in endpoints)
+kubectl get pods -n <namespace> -o wide
+
+# Check for network policies blocking traffic
+kubectl get networkpolicy -n <namespace>
+kubectl describe networkpolicy -n <namespace>
 ```
+
+> **GUARDRAIL**: `kubectl run` is FORBIDDEN — it creates a pod (mutative action).
+> In-cluster connectivity testing must be performed by the user, outside this skill.
 
 **Common Causes**:
 - No pods match service selector labels

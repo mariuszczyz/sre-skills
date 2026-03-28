@@ -9,6 +9,99 @@ guardrails: read-only
 
 A deep-diagnostics skill for root cause analysis of Kubernetes issues. Unlike the health-monitor which provides cluster-wide overviews, this skill performs targeted investigations into specific problems and correlates evidence across multiple resources to identify underlying causes.
 
+---
+
+## GUARDRAILS — READ-ONLY, CONFIRM EVERY COMMAND (CRITICAL)
+
+> **These rules override all other instructions in this skill. Violating them is never acceptable.**
+
+### Core Rules
+
+1. **Read-only at all times.** This skill MUST NEVER execute any command that creates, modifies, or deletes cluster resources — not even temporary ones. There are no exceptions.
+
+2. **Every command requires explicit user confirmation.** This applies to ALL commands, including purely diagnostic ones (`get`, `describe`, `logs`, `top`). Do not execute any `kubectl` or shell command without first showing it to the user and receiving a clear "yes" / "run it" / equivalent approval.
+
+3. **Never assume approval.** Saying "I'll check the logs" and immediately running `kubectl logs` violates rule 2. Always show the command and wait.
+
+4. **Present, don't execute — then ask.** The correct pattern for every single action is:
+   ```
+   I'd like to run:
+     kubectl <command>
+   This will <one-line explanation>. Shall I proceed?
+   ```
+   Only run after the user confirms.
+
+5. **Forbidden commands — never run, never suggest running:**
+
+   | Category | Forbidden Commands |
+   |----------|-------------------|
+   | Deletion | `kubectl delete`, `rm`, `kubectl drain` |
+   | Modification | `kubectl edit`, `kubectl patch`, `kubectl apply`, `kubectl replace` |
+   | Scaling | `kubectl scale`, `kubectl autoscale` |
+   | Rollout changes | `kubectl rollout undo`, `kubectl rollout restart` |
+   | Resource creation | `kubectl run`, `kubectl create`, `kubectl expose` |
+   | Configuration changes | `kubectl set resources`, `kubectl set image`, `kubectl set env` |
+   | Node management | `kubectl cordon`, `kubectl uncordon`, `kubectl taint` |
+   | Secrets manipulation | creating, deleting, or modifying any Secret |
+   | Force flags | `--force` on any command |
+
+   > **Note on `kubectl run`:** Creating a temporary debug pod IS a write operation. Do not use it for connectivity or DNS tests. Use passive commands instead (e.g., check existing pod logs, inspect DNS config, review NetworkPolicy specs).
+
+6. **Remediation = recommendations only.** When a fix is identified, present it as a code block the user can copy and run themselves. Never execute fix commands.
+
+7. **No silent side effects.** Do not pipe output to files (e.g., `tee`, `>`) without user confirmation, and avoid any command with background state changes.
+
+### Command Safety Checklist
+
+Before showing or running ANY command, verify:
+
+- [ ] Does this command only READ data (get, describe, logs, top, auth can-i, rollout history)? → Show it to user and ask for confirmation before running
+- [ ] Does this command CREATE any resource (including temporary pods)? → **FORBIDDEN — do not run, do not ask**
+- [ ] Does this command MODIFY state? → **FORBIDDEN — present as recommendation only**
+- [ ] Does this command DELETE resources? → **FORBIDDEN — present as recommendation only**
+- [ ] Does the command include `patch`, `apply`, `edit`, `delete`, `scale`, `run`, `create`, `set`? → **FORBIDDEN — present as recommendation only**
+
+### Correct Behavior Examples
+
+**Scenario: User asks "why are my pods crashing?"**
+
+**CORRECT:**
+```
+To investigate, I'd like to run:
+  kubectl get pods -n production
+This will show the current pod states. Shall I proceed?
+```
+[User confirms] → run command → analyze output → present next command for confirmation.
+
+**INCORRECT:**
+```
+Let me check your pods...
+[runs kubectl get pods silently]
+I see issues. Let me fix the memory limit...
+[runs kubectl set resources]
+```
+
+**Scenario: Recommending a fix**
+
+**CORRECT:**
+```
+Root cause: memory limit too low (OOMKilled, exit 137).
+
+Recommended fix — run this yourself when ready:
+  kubectl set resources deployment/api-server -n production --limits=memory=512Mi
+
+I will NOT run this. Let me know if you'd like me to explain the impact first.
+```
+
+**INCORRECT:**
+```
+I'll fix that for you. Would you like me to run this command?
+[offers kubectl set resources and runs it on approval]
+```
+> Remediation commands must never be executed by this skill, even with user approval. The user should copy-paste and run them directly.
+
+---
+
 ## Overview
 
 This skill helps you understand **why** things are broken by:
@@ -201,11 +294,14 @@ kubectl describe networkpolicy <policy-name> -n <namespace>
 kubectl describe ingress <ingress-name> -n <namespace>
 kubectl get ingressclass
 
-# Step 6: DNS resolution test
-kubectl run dns-test --rm -it --image=busybox -- nslookup <service-name>.<namespace>.svc.cluster.local || echo "DNS failed"
+# Step 6: DNS configuration review (passive - no pod creation)
+kubectl get configmap coredns -n kube-system -o yaml
+kubectl get svc -n kube-system | grep -i dns
 
-# Step 7: Connectivity test from within cluster
-kubectl run conn-test --rm -it --image=curlimages/curl -- curl -v http://<service-name>:<port>/health || echo "Connection failed"
+# Step 7: Check existing pods for connectivity evidence
+# (Do NOT use kubectl run — creating test pods is a write operation)
+# Instead: inspect logs of existing pods that connect to this service
+kubectl logs <consumer-pod-name> -n <namespace> --tail=100 | grep -i "connection\|refused\|timeout\|dns"
 ```
 
 ### 5. Storage Investigation (PVC/PV)
@@ -304,90 +400,7 @@ The container is being terminated by the OOM killer because it exceeds its 256Mi
 
 ---
 
-## READ-ONLY OPERATIONS GUARDRAILS (CRITICAL)
-
-### This Skill Is Strictly Read-Only
-
-**This skill MUST NEVER perform any of the following actions without explicit user confirmation:**
-
-#### Destructive Operations (NEVER execute without explicit confirmation):
-
-| Operation Type | Forbidden Commands |
-|----------------|-------------------|
-| **Deletion** | `kubectl delete`, `rm`, `remove` |
-| **Modification** | `kubectl edit`, `kubectl patch`, `kubectl apply` |
-| **Scaling** | `kubectl scale`, `kubectl autoscale` |
-| **Rollout Operations** | `kubectl rollout undo`, `kubectl rollout restart` |
-| **Pod Destruction** | `kubectl delete pod`, `kubectl drain`, `kubectl cordon/uncordon` |
-| **Configuration Changes** | `kubectl set resources`, `kubectl set image`, `kubectl set env` |
-| **Force Operations** | `--force` flag on any kubectl command |
-| **Secrets Manipulation** | Creating, deleting, or modifying secrets |
-
-### Guardrail Rules
-
-1. **Diagnose Only**: Only run diagnostic/reading commands:
-   - ✅ Allowed without confirmation: `get`, `describe`, `logs`, `top`, `auth can-i`
-   - ❌ Never run: `delete`, `patch`, `edit`, `apply`, `scale`, `set`, `drain`, `cordon`
-
-2. **Confirmation Required**: Before ANY command that could modify cluster state:
-   - Explain what the command does
-   - Explain why it might be needed
-   - Get explicit user approval (e.g., "Would you like me to run this?")
-   - Never assume approval or use casual language like "let me fix this"
-
-3. **Recommendation Format**: When suggesting remediation:
-   ```markdown
-   ### Recommended Fix
-
-   To resolve this issue, you could run:
-   ```bash
-   kubectl patch deployment/api-server -n production -p '{"spec":{"template":{"spec":{"containers":[{"name":"api-server","resources":{"limits":{"memory":"512Mi"}}}]}}}}'
-   ```
-
-   **This will modify the deployment.** Run this command only if you confirm this is the intended fix.
-   ```
-
-4. **No Silent Changes**: Never run commands that silently change state in the background
-
-5. **Preserve User Control**: The user decides:
-   - When to apply fixes
-   - Which remediation approach to use
-   - Whether to proceed at all
-
-### Command Safety Checklist
-
-Before running ANY command, verify:
-
-- [ ] Does this command only READ data? → Safe to run
-- [ ] Does this command MODIFY state? → **STOP - get confirmation**
-- [ ] Does this command DELETE resources? → **STOP - get explicit confirmation**
-- [ ] Am I about to use `patch`, `apply`, `edit`, `delete`, or `scale`? → **STOP - get explicit confirmation**
-
-### Examples of Correct Behavior
-
-**User**: "My pods are crashing"
-
-**DO:**
-```
-I see the issue. The pods are CrashLoopBackOff because...
-
-Here's what I found:
-- Exit code: 137 (OOMKilled)
-- Memory limit: 256Mi (likely too low)
-
-To fix this, you could increase the memory limit:
-```bash
-kubectl set resources deployment/my-app -n production --limits=memory=512Mi
-```
-Would you like me to run this command?
-```
-
-**DON'T:**
-```
-Let me fix that by increasing the memory...
-
-# kubectl set resources deployment/my-app -n production --limits=memory=512Mi
-```
+> **Guardrails reminder:** All commands require explicit user confirmation before execution. No command that creates, modifies, or deletes resources may ever be run — see the GUARDRAILS section at the top of this skill.
 
 ---
 

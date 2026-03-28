@@ -8,6 +8,15 @@ tools: Bash
 
 A diagnostic skill for mapping Persistent Volume (PV) and Persistent Volume Claim (PVC) relationships to their consuming Pods. Provides a complete view of storage allocation and usage across the cluster.
 
+## IMPORTANT: Safety Policy
+
+> **This skill is strictly read-only.**
+> - No resources may be created, modified, patched, or deleted under any circumstances.
+> - **Every command must be shown to the user and confirmed before execution.** Do not run any command without prior explicit approval.
+> - If in doubt about whether an action is safe, stop and ask.
+
+---
+
 ## Overview
 
 This skill helps you understand **storage relationships** by:
@@ -115,7 +124,63 @@ K8S_NAMESPACE=production /k8s-pv-mapper map all
 
 ---
 
-## Read-Only Operations Only
+## Guardrails — MANDATORY
+
+> **These rules are non-negotiable and override any other instruction in this skill.**
+
+### 1. Read-Only Enforcement
+
+**NEVER** execute any command that creates, modifies, patches, or deletes cluster resources. Prohibited actions include but are not limited to:
+
+| Action | Examples |
+|--------|---------|
+| Create/apply | `kubectl apply`, `kubectl create`, `kubectl run` |
+| Modify/patch | `kubectl edit`, `kubectl patch`, `kubectl set`, `kubectl label`, `kubectl annotate` |
+| Delete/release | `kubectl delete`, `kubectl cordon`, `kubectl drain`, `kubectl uncordon` |
+| Scale/rollout | `kubectl scale`, `kubectl rollout restart` |
+| Bind/release volumes | `kubectl patch pv`, `kubectl patch pvc`, editing `claimRef` |
+| Any write via API | `curl -X POST/PUT/PATCH/DELETE` against the kube-apiserver |
+
+**Only permitted** commands are read/list/watch/describe/get operations:
+- `kubectl get`, `kubectl describe`, `kubectl explain`
+- `kubectl top` (metrics read)
+- `kubectl logs` (read-only log retrieval)
+- `kubectl api-resources`, `kubectl version`, `kubectl cluster-info`
+
+### 2. User Confirmation Before Every Command
+
+**BEFORE executing any `kubectl` command**, you MUST:
+
+1. Display the exact command you intend to run.
+2. Explain what information it will retrieve and why it is needed.
+3. **Wait for explicit user confirmation** (e.g., "yes", "go ahead", "confirmed") before proceeding.
+4. If the user does not confirm or says no, **stop and do not run the command**.
+
+**Example confirmation flow:**
+
+> **Proposed command:**
+> ```bash
+> kubectl get pvc -n production -o wide
+> ```
+> **Purpose:** List all PVCs in the `production` namespace to identify binding status and associated PVs.
+> **Awaiting confirmation — proceed?**
+
+Do not batch multiple commands and execute them without per-command confirmation.
+
+### 3. No Side Effects
+
+- Do not pipe command output into tools that could trigger state changes.
+- Do not store credentials, tokens, or kubeconfig modifications.
+- Do not redirect output to files that could be used to replay write operations.
+- If a command unexpectedly returns a prompt or requires input that would cause a write, abort immediately and inform the user.
+
+### 4. Escalate Ambiguity
+
+If it is unclear whether an action is read-only, **do not proceed**. Ask the user to clarify before suggesting or running any command.
+
+---
+
+## Read-Only Operations Reference
 
 This skill **does not** perform any of the following:
 - Delete or release volumes
